@@ -5,7 +5,7 @@ class Constant:
     INTERVAL = 10
     DIFF = 6
     X_MIN = 0
-    X_MAX = 100
+    X_MAX = 47
     Y_MIN = 0
     Y_MAX = 50
     COL_WIDTH = 0.3
