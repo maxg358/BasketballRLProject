@@ -26,15 +26,19 @@ class RandomAgent(Agent):
     def __init__(self, id, posession=False, team=0):
         super(RandomAgent, self).__init__(id, posession)
         self.movement_space = np.array([0.0, 0.0])
-
+        self.max_player_speed = 2
     
     def act(self, prev_vector, min_val=-2, max_val=2, decimal_places=1):
+        # get velocity in x and y direction
         float1 = round(random.uniform(min_val, max_val), decimal_places)
         float2 = round(random.uniform(min_val, max_val), decimal_places)
         action = np.array([float1, float2])
-        action /= np.linalg.norm(action)
+        # add to previous vector
         action += prev_vector
-        action /= np.linalg.norm(action)
+        # if larger than max speed then cap it at that
+        if np.linalg.norm(action) > self.max_player_speed:
+            action /= np.linalg.norm(action)
+            action *= self.max_player_speed
         return action
 
 class NBAGymEnv(gym.Env):
@@ -57,7 +61,8 @@ class NBAGymEnv(gym.Env):
         self.force_field = 2.5
         self.player_radius = 3.25
         self.ball_radius = 1
-        self.player_speed = 0.25 #seconds per unit
+        self.time_increment = 0.25 #seconds per unit
+        self.max_player_speed = 2
         self.basket_location = (0, 25)
         self.court_dims = (47, 50)
         self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
@@ -92,11 +97,11 @@ class NBAGymEnv(gym.Env):
 
     def reset(self):
         r_p = self.generate_points()
-        self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, *r_p[2], 0.0, 0.0,
-                               *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
+        self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, 0.0, *r_p[2], 0.0, 0.0,
+                                *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
-                                 *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                  0.0, 0.0, 0.0, 0.0, 24.0])
+                                *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                0.0, 0.0, 0.0, 0.0, 24.0])
 
     def reward(self, offense, agent):
         if offense:
@@ -106,9 +111,54 @@ class NBAGymEnv(gym.Env):
 
     def step(self, actions):
         '''
-            actions: List of 10 actions, one for each player
+            actions: np.array of 10 actions, one for each player
         '''
         done = False
+        # update player positions - get proposed positions for all and do out of bounds check,
+        proposed_pos = np.zeros((10, 2))
+        for i, act in enumerate(actions):
+            # cap on movement speed
+            self.state[i*4+2:i*4+4] += act
+            if np.linalg.norm(self.state[i*4+2:i*4+4]) > self.max_player_speed:
+                self.state[i*4+2:i*4+4] /= np.linalg.norm(self.state[i*4+2:i*4+4])
+                self.state[i*4+2:i*4+4] *= self.max_player_speed
+            proposed_pos[i] = self.state[i*4:i*4+2] + self.state[i*4+2:i*4+4]
+            # out of bounds check
+            if proposed_pos[i][0] > self.court_dims[0]:
+                proposed_pos[i][0] = self.court_dims[0]
+            elif proposed_pos[i][0] < 0:
+                proposed_pos[i][0] = 0
+            if proposed_pos[i][1] > self.court_dims[1]:
+                proposed_pos[i][1] = self.court_dims[1]
+            elif proposed_pos[i][1] < 0:
+                proposed_pos[i][1] = 0
+        # collision check
+        for i in range(10):
+            player1_new_position = proposed_pos[i]
+
+            for j in range(10):
+                if i == j:
+                    continue
+                player2_new_position = proposed_pos[j]
+                distance = np.linalg.norm(player1_new_position - player2_new_position)
+
+                # If the players are closer than the minimum allowed distance, adjust their positions
+                if distance < self.force_field:
+                    direction = (player1_new_position - player2_new_position) / distance
+                    overlap = self.force_field - distance
+
+                    # Move both players away from each other to maintain the minimum distance
+                    player1_new_position += direction * (overlap / 2)
+                    player2_new_position -= direction * (overlap / 2)
+
+                    # Update the proposed positions
+                    proposed_pos[i] = player1_new_position
+                    proposed_pos[j] = player2_new_position
+
+        # Update the actual player positions after resolving collisions
+        for i in range(10):
+            self.state[i*4:i*4+2] = proposed_pos[i]
+
         return done
        
     def render(self, mode='human'):
