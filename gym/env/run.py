@@ -14,6 +14,8 @@ while True:
   
   if done or count >2000:
      break
-print(state_array)
+print(state_array[0])
+print(state_array[1])
+print(state_array[2])
 game.render(state_array)
       

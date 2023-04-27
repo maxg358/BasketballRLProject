@@ -7,11 +7,11 @@ from math import sqrt
 from gym import spaces
 import matplotlib.pyplot as plt
 from matplotlib import animation
-#from utils.data import *
 import sys
 sys.path.append('..')
-#from ..utils import *
-#from ..vis import *
+# from utils.data import *
+# from ..utils import *
+# from ..vis import *
 
 class Agent():
     def __init__(self, id, posession=False, team=0):
@@ -28,7 +28,7 @@ class RandomAgent(Agent):
         self.movement_space = np.array([0.0, 0.0])
         self.max_player_speed = 2
     
-    def act(self, prev_vector, min_val=-2, max_val=2, decimal_places=1):
+    def act(self, prev_vector=[0., 0.], min_val=-2, max_val=2, decimal_places=1):
         # get velocity in x and y direction
         float1 = round(random.uniform(min_val, max_val), decimal_places)
         float2 = round(random.uniform(min_val, max_val), decimal_places)
@@ -145,16 +145,22 @@ class NBAGymEnv(gym.Env):
 
                 # If the players are closer than the minimum allowed distance, adjust their positions
                 if distance < self.force_field:
-                    direction = (player1_new_position - player2_new_position) / distance
-                    overlap = self.force_field - distance
+                    if distance > 0:
+                        direction = (player1_new_position - player2_new_position) / distance
+                        overlap = self.force_field - distance
 
-                    # Move both players away from each other to maintain the minimum distance
-                    player1_new_position += direction * (overlap / 2)
-                    player2_new_position -= direction * (overlap / 2)
+                        # Move both players away from each other to maintain the minimum distance
+                        player1_new_position += direction * (overlap / 2)
+                        player2_new_position -= direction * (overlap / 2)
 
-                    # Update the proposed positions
-                    proposed_pos[i] = player1_new_position
-                    proposed_pos[j] = player2_new_position
+                        # Update the proposed positions
+                        proposed_pos[i] = player1_new_position
+                        proposed_pos[j] = player2_new_position
+                    else:
+                        # If the players are on top of each other, move them back
+                        # This is not ideal, but it's a rare case
+                        proposed_pos[i] = self.state[i*4:i*4+2]
+                        proposed_pos[j] = self.state[j*4:j*4+2]
 
         # Update the actual player positions after resolving collisions
         for i in range(10):
