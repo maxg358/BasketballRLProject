@@ -8,6 +8,7 @@ from gym import spaces
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import sys
+import time
 sys.path.append('..')
 # from utils.data import *
 # from ..utils import *
@@ -58,6 +59,7 @@ class NBAGymEnv(gym.Env):
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
                                  *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                   0.0, 0.0, 0.0, 0.0, 24.0])
+        self.all_states = [np.copy(self.state)]
         self.force_field = 2.5
         self.player_radius = 3.25
         self.ball_radius = 1
@@ -165,7 +167,7 @@ class NBAGymEnv(gym.Env):
         # Update the actual player positions after resolving collisions
         for i in range(10):
             self.state[i*4:i*4+2] = proposed_pos[i]
-
+        self.all_states.append(np.copy(self.state))
         return done
        
     def render(self, state_array):
@@ -196,9 +198,9 @@ class NBAGymEnv(gym.Env):
             defense_player_coords = state_array[frame][10:20]
             player_circles = []
             for i in range(5):
-                player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius, color = 'g' ))
+                player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius/2, color = 'g' ))
             for i in range(5):
-                player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius, color = 'b' ))
+                player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius/2, color = 'b' ))
 
             for circle in player_circles:
                 ax.add_patch(circle)
