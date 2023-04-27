@@ -7,11 +7,11 @@ from math import sqrt
 from gym import spaces
 import matplotlib.pyplot as plt
 from matplotlib import animation
-from utils.data import *
+#from utils.data import *
 import sys
 sys.path.append('..')
-from ..utils import *
-from ..vis import *
+#from ..utils import *
+#from ..vis import *
 
 class Agent():
     def __init__(self, id, posession=False, team=0):
@@ -141,6 +141,7 @@ class NBAGymEnv(gym.Env):
                     continue
                 player2_new_position = proposed_pos[j]
                 distance = np.linalg.norm(player1_new_position - player2_new_position)
+                
 
                 # If the players are closer than the minimum allowed distance, adjust their positions
                 if distance < self.force_field:
@@ -161,70 +162,51 @@ class NBAGymEnv(gym.Env):
 
         return done
        
-    def render(self, mode='human'):
+    def render(self, state_array):
         # Leave some space for inbound passes
-        ax = plt.axes(xlim=(Constant.X_MIN,
-                            Constant.X_MAX),
-                      ylim=(Constant.Y_MIN,
-                            Constant.Y_MAX))
+        ax = plt.axes(xlim=(0,
+                            47),
+                      ylim=(0,
+                            50))
         ax.axis('off')
         fig = plt.gcf()
         ax.grid(False)  # Remove grid
-        start_moment = self.moments[0]
-        player_dict = self.player_ids_dict
+        
 
-        clock_info = ax.annotate('', xy=[Constant.X_CENTER, Constant.Y_CENTER],
+        clock_info = ax.annotate('', xy=[23.5, 45],
                                  color='black', horizontalalignment='center',
                                    verticalalignment='center')
 
-        annotations = [ax.annotate(self.player_ids_dict[player.id][1], xy=[0, 0], color='w',
-                                   horizontalalignment='center',
-                                   verticalalignment='center', fontweight='bold')
-                       for player in start_moment.players]
-
-        # Prepare table
-        sorted_players = sorted(start_moment.players, key=lambda player: player.team.id)
         
-        home_player = sorted_players[0]
-        guest_player = sorted_players[5]
-        column_labels = tuple([home_player.team.name, guest_player.team.name])
-        column_colours = tuple([home_player.team.color, guest_player.team.color])
-        cell_colours = [column_colours for _ in range(5)]
         
-        home_players = [' #'.join([player_dict[player.id][0], player_dict[player.id][1]]) for player in sorted_players[:5]]
-        guest_players = [' #'.join([player_dict[player.id][0], player_dict[player.id][1]]) for player in sorted_players[5:]]
-        players_data = list(zip(home_players, guest_players))
+        
+        
+        # ball_circle = plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
+        #                          color=start_moment.ball.color)
+        
+        # ax.add_patch(ball_circle)
+        def animate(frame):
+            offense_player_coords = state_array[frame][:10]
+            defense_player_coords = state_array[frame][10:20]
+            player_circles = []
+            for i in range(5):
+                player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius, color = 'g' ))
+            for i in range(5):
+                player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius, color = 'b' ))
 
-        table = plt.table(cellText=players_data,
-                              colLabels=column_labels,
-                              colColours=column_colours,
-                              colWidths=[Constant.COL_WIDTH, Constant.COL_WIDTH],
-                              loc='bottom',
-                              cellColours=cell_colours,
-                              fontsize=Constant.FONTSIZE,
-                              cellLoc='center')
-        table.scale(1, Constant.SCALE)
-        table_cells = table.properties()['child_artists']
-        for cell in table_cells:
-            cell._text.set_color('white')
-
-        player_circles = [plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE, color=player.color)
-                          for player in start_moment.players]
-        ball_circle = plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
-                                 color=start_moment.ball.color)
-        for circle in player_circles:
-            ax.add_patch(circle)
-        ax.add_patch(ball_circle)
-
+            for circle in player_circles:
+                ax.add_patch(circle)
+            return player_circles
         anim = animation.FuncAnimation(
-                         fig, self.update_radius,
-                         fargs=(player_circles, ball_circle, annotations, clock_info),
-                         frames=len(self.moments), interval=Constant.INTERVAL)
-        court = plt.imread("court.png")
-        plt.imshow(court, zorder=0, extent=[Constant.X_MIN, Constant.X_MAX - Constant.DIFF,
-                                            Constant.Y_MAX, Constant.Y_MIN])
+                         fig, animate, frames = len(state_array),
+                         
+                          interval=10)
+        court = plt.imread("halfcourt.png")
+        plt.imshow(court, zorder=0, extent=[0, 47,
+                                            50, 0])
         plt.show()
-
+    
+        
     
     def close(self):
         pass
