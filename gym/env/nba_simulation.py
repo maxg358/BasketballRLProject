@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 import sys
 sys.path.append('..')
+from copy import deepcopy
 # from utils.data import *
 # from ..utils import *
 # from ..vis import *
@@ -65,6 +66,7 @@ class NBAGymEnv(gym.Env):
         self.max_player_speed = 2
         self.basket_location = (0, 25)
         self.court_dims = (47, 50)
+        self.all_states = [deepcopy(self.state)]
         self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
         # Initialize the play
 
@@ -165,7 +167,7 @@ class NBAGymEnv(gym.Env):
         # Update the actual player positions after resolving collisions
         for i in range(10):
             self.state[i*4:i*4+2] = proposed_pos[i]
-
+        self.all_states.append(deepcopy(self.state))
         return done
        
     def render(self, state_array):
@@ -183,7 +185,16 @@ class NBAGymEnv(gym.Env):
                                  color='black', horizontalalignment='center',
                                    verticalalignment='center')
 
-        
+        offense_player_coords = self.all_states[0][:10]
+        defense_player_coords = self.all_states[0][10:20]
+        player_circles = []
+        for i in range(5):
+            player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius, color = 'g' ))
+        for i in range(5):
+            player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius, color = 'b' ))
+
+        # for circle in player_circles:
+        #     ax.add_patch(circle)
         
         
         
@@ -191,9 +202,20 @@ class NBAGymEnv(gym.Env):
         #                          color=start_moment.ball.color)
         
         # ax.add_patch(ball_circle)
-        def animate(frame):
-            offense_player_coords = state_array[frame][:10]
-            defense_player_coords = state_array[frame][10:20]
+        
+        anim = animation.FuncAnimation(
+                         fig, self.animate, frames = len(state_array),fargs = (ax,), blit = True,
+                         
+                          interval=10)
+        court = plt.imread("halfcourt.png")
+        plt.imshow(court, zorder=0, extent=[0, 47,
+                                            50, 0])
+        plt.show()
+    
+        
+    def animate(self, frame, ax):
+            offense_player_coords = self.all_states[frame][:10]
+            defense_player_coords = self.all_states[frame][10:20]
             player_circles = []
             for i in range(5):
                 player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius, color = 'g' ))
@@ -203,17 +225,6 @@ class NBAGymEnv(gym.Env):
             for circle in player_circles:
                 ax.add_patch(circle)
             return player_circles
-        anim = animation.FuncAnimation(
-                         fig, animate, frames = len(state_array),
-                         
-                          interval=10)
-        court = plt.imread("halfcourt.png")
-        plt.imshow(court, zorder=0, extent=[0, 47,
-                                            50, 0])
-        plt.show()
-    
-        
-    
     def close(self):
         pass
     
