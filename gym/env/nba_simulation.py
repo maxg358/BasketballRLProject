@@ -19,18 +19,37 @@ class Agent():
     def __init__(self, id, posession=False, team=0):
         super(Agent, self).__init__()
         self.player = id
-        self.movement_space = np.array([0.0, 0.0]) #TODO 
+        self.movement_space = np.array([0.0, 0.0])
         self.posession = posession
-        self.ball_handler_space = None #TODO
+        #TODO: Dribble (pass to yourself), Pass to 4 others, Shoot (a pass to the rim)
+        self.ball_handler_space = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]) 
         self.team = team
 
 class RandomAgent(Agent):
     def __init__(self, id, posession=False, team=0):
-        super(RandomAgent, self).__init__(id, posession)
+        super(RandomAgent, self).__init__(id, posession, team)
         self.movement_space = np.array([0.0, 0.0])
         self.max_player_speed = 2
-    
+
+    def ball_action(self):
+        # weighted probability of passing/shooting vs dribbling
+        weights = [5, 5, 5, 5, 5, 5]
+        weights[self.player] = 75
+        choice = random.choice(range(6), weights=weights)
+        # if pass to yourself then dribble
+        if choice == self.player:
+            return None
+        else:
+            self.ball_handler_space[choice] = 1.0
+            return self.ball_handler_space
+        
     def act(self, prev_vector=[0., 0.], min_val=-2, max_val=2, decimal_places=1):
+        # if they have the ball perform ball action
+        if self.posession == True:
+            a = self.ball_action()
+            if a != None:
+                # no movement cause ball movement
+                return np.array([0.0, 0.0])
         # get velocity in x and y direction
         float1 = round(random.uniform(min_val, max_val), decimal_places)
         float2 = round(random.uniform(min_val, max_val), decimal_places)
@@ -48,24 +67,27 @@ class NBAGymEnv(gym.Env):
         super(NBAGymEnv, self).__init__()
         '''
             State: dimensions 0-39 are [2D position, 2D direction] + 11D posession
-            + 2D ball position + 1D shot clock
+            + 2D ball position + 1D shot clock + 5D to say which player you are
             Action: 2D movement for all players except ball handler
 
         '''
         # Define action and observation spaces
         r_p = self.generate_points()
-
-        self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, *r_p[2], 0.0, 0.0,
-                               *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
+        # 10 players’ info ( 2D position vectors + 2D direction vector) + 11D who has the ball + 2D ball position + 2D ball vector + 1D shot clock
+        self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, 0.0, *r_p[2], 0.0, 0.0,
+                                *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
-                                 *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                  0.0, 0.0, 0.0, 0.0, 24.0])
+                                *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                0.0, 0.0, 0.0, *r_p[0], 0.0, 0.0, 24.0])
+        self.player_posession = 0
         self.all_states = [np.copy(self.state)]
-        self.force_field = 2.5
+        self.force_field = 5
         self.player_radius = 3.25
-        self.ball_radius = 1
+        self.ball_radius = 1.5
         self.time_increment = 0.25 #seconds per unit
         self.max_player_speed = 2
+        self.ball_speed = 4
+        self.ball_state = 'DRIBBLING' # or 'PASSING' or 'SHOOTING'
         self.basket_location = (0, 25)
         self.court_dims = (47, 50)
         self.all_states = [deepcopy(self.state)]
@@ -112,12 +134,8 @@ class NBAGymEnv(gym.Env):
             pass
         else:
             pass
-
-    def step(self, actions):
-        '''
-            actions: np.array of 10 actions, one for each player
-        '''
-        done = False
+    
+    def movement(self, actions):
         # update player positions - get proposed positions for all and do out of bounds check,
         proposed_pos = np.zeros((10, 2))
         for i, act in enumerate(actions):
@@ -127,15 +145,7 @@ class NBAGymEnv(gym.Env):
                 self.state[i*4+2:i*4+4] /= np.linalg.norm(self.state[i*4+2:i*4+4])
                 self.state[i*4+2:i*4+4] *= self.max_player_speed
             proposed_pos[i] = self.state[i*4:i*4+2] + self.state[i*4+2:i*4+4]
-            # out of bounds check
-            if proposed_pos[i][0] > self.court_dims[0]:
-                proposed_pos[i][0] = self.court_dims[0]
-            elif proposed_pos[i][0] < 0:
-                proposed_pos[i][0] = 0
-            if proposed_pos[i][1] > self.court_dims[1]:
-                proposed_pos[i][1] = self.court_dims[1]
-            elif proposed_pos[i][1] < 0:
-                proposed_pos[i][1] = 0
+            
         # collision check
         for i in range(10):
             player1_new_position = proposed_pos[i]
@@ -146,7 +156,6 @@ class NBAGymEnv(gym.Env):
                 player2_new_position = proposed_pos[j]
                 distance = np.linalg.norm(player1_new_position - player2_new_position)
                 
-
                 # If the players are closer than the minimum allowed distance, adjust their positions
                 if distance < self.force_field:
                     if distance > 0:
@@ -168,7 +177,45 @@ class NBAGymEnv(gym.Env):
 
         # Update the actual player positions after resolving collisions
         for i in range(10):
+            # out of bounds check
+            if proposed_pos[i][0] > self.court_dims[0] - self.force_field:
+                proposed_pos[i][0] = self.court_dims[0] - self.force_field
+            elif proposed_pos[i][0] < self.force_field:
+                proposed_pos[i][0] = self.force_field
+            if proposed_pos[i][1] > self.court_dims[1] - self.force_field:
+                proposed_pos[i][1] = self.court_dims[1] - self.force_field
+            elif proposed_pos[i][1] < self.force_field:
+                proposed_pos[i][1] = self.force_field
             self.state[i*4:i*4+2] = proposed_pos[i]
+
+    def ball_movement(self):
+        # if someone is dribbling
+        if self.ball_state == 'DRIBBLING':
+            self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
+            self.state[-3:-1] = self.state[self.player_posession*4+2:self.player_posession*4+4]
+        else:
+            # if ball being passed to someone
+            self.state[-5:-3] += self.state[-3:-1]
+            if self.ball_state == 'PASSING':
+                for i in range(10):
+                    distance = np.linalg.norm(self.state[i*4:i*4+2] - self.state[-5:-3])
+                    if distance < self.player_radius + self.ball_radius:
+                        self.player_posession = i
+                        self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
+
+    def step(self, actions):
+        '''
+            actions: np.array of 10 actions, one for each player
+        '''
+        done = False
+        # update player positions
+        self.movement(actions)
+        # TODO: update ball vector
+        # update ball position
+        self.ball_movement()
+        self.state[-1] -= self.time_increment
+        if self.state[-1] <= 0:
+            done = True
         self.all_states.append(deepcopy(self.state))
         return done
        
@@ -197,18 +244,13 @@ class NBAGymEnv(gym.Env):
 
         # for circle in player_circles:
         #     ax.add_patch(circle)
-        
-        
-        
         # ball_circle = plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
         #                          color=start_moment.ball.color)
-        
         # ax.add_patch(ball_circle)
         
         anim = animation.FuncAnimation(
-                         fig, self.animate, frames = len(state_array),fargs = (ax,), blit = True,
-                         
-                          interval=10)
+                         fig, self.animate, frames = len(state_array),fargs = (ax,), 
+                         blit = True, interval=10)
         court = plt.imread("halfcourt.png")
         plt.imshow(court, zorder=0, extent=[0, 47,
                                             50, 0])
@@ -220,9 +262,9 @@ class NBAGymEnv(gym.Env):
             defense_player_coords = self.all_states[frame][10:20]
             player_circles = []
             for i in range(5):
-                player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius/2, color = 'g' ))
+                player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius/3, color = 'g' ))
             for i in range(5):
-                player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius/2, color = 'b' ))
+                player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius/3, color = 'b' ))
 
             for circle in player_circles:
                 ax.add_patch(circle)
