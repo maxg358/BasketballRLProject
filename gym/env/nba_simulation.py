@@ -81,7 +81,7 @@ class NBAGymEnv(gym.Env):
                                 0.0, 0.0, 0.0, *r_p[0], 0.0, 0.0, 24.0])
         self.player_posession = 0
         self.all_states = [np.copy(self.state)]
-        self.force_field = 5
+        self.force_field = 3.25
         self.player_radius = 3.25
         self.ball_radius = 1.5
         self.time_increment = 0.25 #seconds per unit
@@ -127,14 +127,12 @@ class NBAGymEnv(gym.Env):
                                 *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
                                 *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                0.0, 0.0, 0.0, 0.0, 24.0])
+                                0.0, 0.0, 0.0, *r_p[0], 0.0, 0.0, 24.0])
 
-    def reward(self, offense, agent):
-        if offense:
-            pass
-        else:
-            pass
-    
+    def reward(self):
+        pass
+
+
     def movement(self, actions):
         # update player positions - get proposed positions for all and do out of bounds check,
         proposed_pos = np.zeros((10, 2))
@@ -194,14 +192,39 @@ class NBAGymEnv(gym.Env):
             self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
             self.state[-3:-1] = self.state[self.player_posession*4+2:self.player_posession*4+4]
         else:
-            # if ball being passed to someone
+            # if ball being passed to someone/thing
             self.state[-5:-3] += self.state[-3:-1]
             if self.ball_state == 'PASSING':
                 for i in range(10):
                     distance = np.linalg.norm(self.state[i*4:i*4+2] - self.state[-5:-3])
                     if distance < self.player_radius + self.ball_radius:
+                        # if near defense, give 10% chance of stealing, otherwise let it go through
+                        if i >= 5 and random.choice([1,2,3,4,5,6,7,8,9,10]) != 10:
+                            continue
                         self.player_posession = i
+                        self.players[i].posession = True
                         self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
+                        # if intercepted by defense then turnover
+                        if self.player_posession >= 5:
+                            return False
+                # out of bounds turnover
+                if self.state[-5] > self.court_dims[0] - self.force_field:
+                    return False
+                elif self.state[-5] < self.force_field:
+                    return False
+                if self.state[-4] > self.court_dims[1] - self.force_field:
+                    return False
+                elif self.state[-4] < self.force_field:
+                    return False
+            else: # shooting
+                distance = np.linalg.norm(self.state[-5:-3] - self.basket_location)
+                if distance < self.ball_radius:
+                    # 30% chance missing
+                    if random.choice([1,2,3,4,5,6,7,8,9,10]) > 7:
+                        return False
+                    # 70% chance making
+                    else:
+                        return True
 
     def step(self, actions):
         '''
@@ -210,9 +233,43 @@ class NBAGymEnv(gym.Env):
         done = False
         # update player positions
         self.movement(actions)
-        # TODO: update ball vector
+        if self.player_posession != None:
+            # if player has ball posession then check for update in ball state
+            b_space = self.players[self.player_posession].ball_handler_space
+            # if agent chose to pass to themselves then they're dribbling
+            if np.argmax(b_space) == self.player_posession:
+                self.ball_state = 'DRIBBLING'
+            else:
+                # if pass to rim, then shoot, determine if blocked or not, then set ball on its course
+                if np.argmax(b_space) == 5:
+                    self.ball_state = 'SHOOTING'
+                    # check if any defense is blocking
+                    for i in range(5):
+                        distance = np.linalg.norm(self.state[(i+5)*4:(i+5)*4+2] - self.state[-5:-3])
+                        # probability of blocking based on distance away with max distance for chance to block is 2*ball radius + player radius
+                        # highest probability capped at 0.25 if you're within force field
+                        if distance < self.player_radius + 2*self.ball_radius:
+                            weight = distance * (0.25/(-2*self.ball_radius)) + -(self.player_radius + 2*self.ball_radius)*(0.25/(-2*self.ball_radius))
+                            if random.choice([1,2], weights=[weight, 1-weight]) == 1:
+                                done = False
+                    # rim - ball position norm * ball speed gets ball vector
+                    self.state[-3:-1] = (list(self.basket_location) - self.state[-5:-3])/np.linalg.norm(list(self.basket_location) - self.state[-5:-3]) * self.ball_speed
+                # if passing, find target player, set ball on its course
+                else:
+                    self.ball_state = 'PASSING'
+                    # curr target player pos - ball position norm * ball speed gets ball vector
+                    target_pos = self.state[np.argmax(b_space)*4:np.argmax(b_space)*4+2]
+                    self.state[-3:-1] = (target_pos - self.state[-5:-3])/np.linalg.norm(target_pos - self.state[-5:-3]) * self.ball_speed
+                # Remove posession from player
+                self.players[self.player_posession].ball_handler_space = np.zeros(6)
+                self.players[self.player_posession].posession = False
+                self.player_posession = None
+
         # update ball position
-        self.ball_movement()
+        ball_motion = self.ball_movement()
+        if ball_motion != None:
+            # if ball_motion == True track it so reward can be adjusted
+            done = True
         self.state[-1] -= self.time_increment
         if self.state[-1] <= 0:
             done = True
@@ -260,12 +317,14 @@ class NBAGymEnv(gym.Env):
     def animate(self, frame, ax):
             offense_player_coords = self.all_states[frame][:10]
             defense_player_coords = self.all_states[frame][10:20]
+            ball_coords = self.all_states[frame][-5:-3]
             player_circles = []
             for i in range(5):
                 player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius/3, color = 'g' ))
             for i in range(5):
                 player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius/3, color = 'b' ))
-
+            # ball circle
+            player_circles.append(plt.Circle((ball_coords[2*i], ball_coords[2*i+1]), radius = self.ball_radius/3, color = 'o' ))
             for circle in player_circles:
                 ax.add_patch(circle)
             return player_circles
