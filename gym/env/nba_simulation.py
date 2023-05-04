@@ -22,7 +22,8 @@ class Agent():
         self.movement_space = np.array([0.0, 0.0])
         self.posession = posession
         #TODO: Dribble (pass to yourself), Pass to 4 others, Shoot (a pass to the rim)
-        self.ball_handler_space = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]) 
+        self.ball_handler_space = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        
         self.team = team
 
 class RandomAgent(Agent):
@@ -32,22 +33,29 @@ class RandomAgent(Agent):
         self.max_player_speed = 2
 
     def ball_action(self):
+        
         # weighted probability of passing/shooting vs dribbling
-        weights = [5, 5, 5, 5, 5, 5]
-        weights[self.player] = 75
-        choice = random.choice(range(6), weights=weights)
+        
+        weights = [.08, .08, .08, .08, .08, .08]
+        weights[self.player] = .6
+        choice = random.choices(range(6), weights=weights)[0]
         # if pass to yourself then dribble
         if choice == self.player:
-            return None
-        else:
+            self.ball_handler_space = np.zeros(6)
             self.ball_handler_space[choice] = 1.0
-            return self.ball_handler_space
+            print(self.player, 'dribble choice')
+            return [None]
+        else:
+            print(self.player,'other choice', choice)
+            self.ball_handler_space = np.zeros(6)
+            self.ball_handler_space[choice] = 1.0
+            return deepcopy(self.ball_handler_space)
         
     def act(self, prev_vector=[0., 0.], min_val=-2, max_val=2, decimal_places=1):
         # if they have the ball perform ball action
         if self.posession == True:
             a = self.ball_action()
-            if a != None:
+            if a[0] != None:
                 # no movement cause ball movement
                 return np.array([0.0, 0.0])
         # get velocity in x and y direction
@@ -85,10 +93,10 @@ class NBAGymEnv(gym.Env):
         self.player_radius = 3.25
         self.ball_radius = 1.5
         self.time_increment = 0.25 #seconds per unit
-        self.max_player_speed = 2
-        self.ball_speed = 4
-        self.ball_state = 'DRIBBLING' # or 'PASSING' or 'SHOOTING'
-        self.basket_location = (0, 25)
+        self.max_player_speed = .5
+        self.ball_speed = 1
+        self.ball_state = 'DRIBBLING' # or 'PASSING' or 'SHOOTING' of 'MIDAIR'
+        self.basket_location = (6, 25)
         self.court_dims = (47, 50)
         self.all_states = [deepcopy(self.state)]
         self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
@@ -108,7 +116,7 @@ class NBAGymEnv(gym.Env):
         attempts = 0
 
         while len(points) < num_points and attempts < 1000:
-            new_point = (random.uniform(0, box_width), random.uniform(0, box_height))
+            new_point = (random.uniform(2, box_width-2), random.uniform(2, box_height-2))
 
             if is_valid_point(new_point, points, min_distance):
                 points.append(new_point)
@@ -118,7 +126,8 @@ class NBAGymEnv(gym.Env):
         if attempts == 1000:
             print("Failed to generate the required number of points with the specified minimum distance.")
             return []
-
+        #self.state[-5:-3] = self.state[0:2]
+        
         return points
 
     def reset(self):
@@ -184,47 +193,68 @@ class NBAGymEnv(gym.Env):
                 proposed_pos[i][1] = self.court_dims[1] - self.force_field
             elif proposed_pos[i][1] < self.force_field:
                 proposed_pos[i][1] = self.force_field
+            
             self.state[i*4:i*4+2] = proposed_pos[i]
 
     def ball_movement(self):
-        # if someone is dribbling
+        # if someone is dribbling, set ball pos to that of player with posession, ball direction to player direction
         if self.ball_state == 'DRIBBLING':
+            print('dribbling')
             self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
             self.state[-3:-1] = self.state[self.player_posession*4+2:self.player_posession*4+4]
         else:
             # if ball being passed to someone/thing
             self.state[-5:-3] += self.state[-3:-1]
-            if self.ball_state == 'PASSING':
+            prev_player = self.player_posession
+            if self.ball_state == 'PASSING' or self.ball_state  == 'MIDAIR PASS':
+                self.ball_state = 'MIDAIR PASS'
+                #self.player_posession= None
+                #print(self.ball_state)
                 for i in range(10):
+                    
                     distance = np.linalg.norm(self.state[i*4:i*4+2] - self.state[-5:-3])
-                    if distance < self.player_radius + self.ball_radius:
+                    if distance < self.player_radius + self.ball_radius and i!= self.player_posession:
                         # if near defense, give 10% chance of stealing, otherwise let it go through
-                        if i >= 5 and random.choice([1,2,3,4,5,6,7,8,9,10]) != 10:
+                        if i >= 5 and random.choice([1,2,3,4,5,6,7,8,9,10]) != 10 :
+                            print('not stolen')
                             continue
+                        print('caught by', i, prev_player)
+                        
                         self.player_posession = i
                         self.players[i].posession = True
+                        self.ball_state = 'DRIBBLING'
                         self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
+                        self.state[-3:-1] = self.state[self.player_posession*4+2:self.player_posession*4+4]
                         # if intercepted by defense then turnover
                         if self.player_posession >= 5:
+                            print('possession wrong')
                             return False
+                        break
                 # out of bounds turnover
                 if self.state[-5] > self.court_dims[0] - self.force_field:
+                    print('OB1')
                     return False
                 elif self.state[-5] < self.force_field:
+                    print('OB2')
                     return False
                 if self.state[-4] > self.court_dims[1] - self.force_field:
+                    print('OB3')
                     return False
                 elif self.state[-4] < self.force_field:
+                    print('OB4')
                     return False
-            else: # shooting
+            elif (self.ball_state == 'SHOOTING' or 'MIDAIR SHOT'): # shooting
+                self.ball_state = 'MIDAIR SHOT'
                 distance = np.linalg.norm(self.state[-5:-3] - self.basket_location)
                 if distance < self.ball_radius:
                     # 30% chance missing
                     if random.choice([1,2,3,4,5,6,7,8,9,10]) > 7:
+                        print('Missed Shot')
                         return False
                     # 70% chance making
                     else:
-                        return True
+                        print('Made shot')
+                        return False
 
     def step(self, actions):
         '''
@@ -233,16 +263,22 @@ class NBAGymEnv(gym.Env):
         done = False
         # update player positions
         self.movement(actions)
-        if self.player_posession != None:
+        print(self.ball_state,  'in step')
+
+        #print(self.player_posession)
+        if self.ball_state != 'MIDAIR SHOT'and self.ball_state != 'MIDAIR PASS':
+            print('someone has possession')
             # if player has ball posession then check for update in ball state
             b_space = self.players[self.player_posession].ball_handler_space
             # if agent chose to pass to themselves then they're dribbling
             if np.argmax(b_space) == self.player_posession:
+                #print('DRIBBLING IN STEP')
                 self.ball_state = 'DRIBBLING'
             else:
                 # if pass to rim, then shoot, determine if blocked or not, then set ball on its course
                 if np.argmax(b_space) == 5:
                     self.ball_state = 'SHOOTING'
+                    #print("SHOOTING IN  STEP")
                     # check if any defense is blocking
                     for i in range(5):
                         distance = np.linalg.norm(self.state[(i+5)*4:(i+5)*4+2] - self.state[-5:-3])
@@ -250,33 +286,37 @@ class NBAGymEnv(gym.Env):
                         # highest probability capped at 0.25 if you're within force field
                         if distance < self.player_radius + 2*self.ball_radius:
                             weight = distance * (0.25/(-2*self.ball_radius)) + -(self.player_radius + 2*self.ball_radius)*(0.25/(-2*self.ball_radius))
-                            if random.choice([1,2], weights=[weight, 1-weight]) == 1:
+                            if random.choices([1,2], weights=[weight, 1-weight]) == 1:
                                 done = False
                     # rim - ball position norm * ball speed gets ball vector
                     self.state[-3:-1] = (list(self.basket_location) - self.state[-5:-3])/np.linalg.norm(list(self.basket_location) - self.state[-5:-3]) * self.ball_speed
                 # if passing, find target player, set ball on its course
                 else:
                     self.ball_state = 'PASSING'
+                    #print('PASSING IN STEP')
                     # curr target player pos - ball position norm * ball speed gets ball vector
                     target_pos = self.state[np.argmax(b_space)*4:np.argmax(b_space)*4+2]
                     self.state[-3:-1] = (target_pos - self.state[-5:-3])/np.linalg.norm(target_pos - self.state[-5:-3]) * self.ball_speed
                 # Remove posession from player
                 self.players[self.player_posession].ball_handler_space = np.zeros(6)
                 self.players[self.player_posession].posession = False
-                self.player_posession = None
+                
+                #self.player_posession = None
 
         # update ball position
         ball_motion = self.ball_movement()
-        if ball_motion != None:
-            # if ball_motion == True track it so reward can be adjusted
+        if ball_motion == False:
+            # if ball_motion == True track it so reward can be adjusted - just keeping it to only false for now
+            print('ball not moving')
             done = True
         self.state[-1] -= self.time_increment
         if self.state[-1] <= 0:
             done = True
         self.all_states.append(deepcopy(self.state))
+        #print(done)
         return done
        
-    def render(self, state_array):
+    def render(self):
         # Leave some space for inbound passes
         ax = plt.axes(xlim=(0,
                             47),
@@ -287,18 +327,23 @@ class NBAGymEnv(gym.Env):
         ax.grid(False)  # Remove grid
         
 
-        clock_info = ax.annotate('', xy=[23.5, 45],
-                                 color='black', horizontalalignment='center',
-                                   verticalalignment='center')
+        
+        # ax.annotate(24.0, xy=[23.5, 48],
+        #                          color='black', horizontalalignment='center',
+        #                            verticalalignment='center')
 
-        offense_player_coords = self.all_states[0][:10]
-        defense_player_coords = self.all_states[0][10:20]
+        offense_player_coords = self.all_states[0][:20]
+        defense_player_coords = self.all_states[0][20:40]
+        ball_coords = self.all_states[0][-5:-3]
         player_circles = []
         for i in range(5):
-            player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius, color = 'g' ))
+            player_circles.append(plt.Circle((offense_player_coords[4*i], offense_player_coords[4*i+1]), radius = self.player_radius, color = 'g' ))
+            #ax.annotate(i, xy=[offense_player_coords[4*i], offense_player_coords[4*i+1]], color = 'k')
         for i in range(5):
-            player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius, color = 'b' ))
-
+            player_circles.append(plt.Circle((defense_player_coords[4*i], defense_player_coords[4*i+1]), radius = self.player_radius, color = 'b' ))
+            #ax.annotate(i+5, xy=[defense_player_coords[4*i], defense_player_coords[4*i+1]], color = 'k')
+        
+        player_circles.append(plt.Circle((ball_coords[0], ball_coords[1]), radius = self.ball_radius/3, color = 'orange' ))
         # for circle in player_circles:
         #     ax.add_patch(circle)
         # ball_circle = plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
@@ -306,8 +351,8 @@ class NBAGymEnv(gym.Env):
         # ax.add_patch(ball_circle)
         
         anim = animation.FuncAnimation(
-                         fig, self.animate, frames = len(state_array),fargs = (ax,), 
-                         blit = True, interval=10)
+                         fig, self.animate, frames = len(self.all_states),fargs = (ax,), 
+                         blit = True, interval=10,repeat = True)
         court = plt.imread("halfcourt.png")
         plt.imshow(court, zorder=0, extent=[0, 47,
                                             50, 0])
@@ -315,18 +360,26 @@ class NBAGymEnv(gym.Env):
     
         
     def animate(self, frame, ax):
-            offense_player_coords = self.all_states[frame][:10]
-            defense_player_coords = self.all_states[frame][10:20]
+            offense_player_coords = self.all_states[frame][:20]
+            defense_player_coords = self.all_states[frame][20:40]
             ball_coords = self.all_states[frame][-5:-3]
             player_circles = []
             for i in range(5):
-                player_circles.append(plt.Circle((offense_player_coords[i], offense_player_coords[i+1]), radius = self.player_radius/3, color = 'g' ))
+                player_circles.append(plt.Circle((offense_player_coords[i*4], offense_player_coords[i*4+1]), radius = self.player_radius/3, color = 'g' ))
+                #ax.annotate(i, xy=[offense_player_coords[4*i], offense_player_coords[4*i+1]], color = 'k')
             for i in range(5):
-                player_circles.append(plt.Circle((defense_player_coords[2*i], defense_player_coords[2*i+1]), radius = self.player_radius/3, color = 'b' ))
+                player_circles.append(plt.Circle((defense_player_coords[4*i], defense_player_coords[4*i+1]), radius = self.player_radius/3, color = 'b' ))
+                #ax.annotate(i+5, xy=[defense_player_coords[4*i], defense_player_coords[4*i+1]], color = 'k')
             # ball circle
-            player_circles.append(plt.Circle((ball_coords[2*i], ball_coords[2*i+1]), radius = self.ball_radius/3, color = 'o' ))
+            player_circles.append(plt.Circle((ball_coords[0], ball_coords[1]), radius = self.ball_radius/3, color = 'orange' ))
             for circle in player_circles:
+                
                 ax.add_patch(circle)
+            ax.text(23.5,48,str(self.all_states[frame][-1]),
+                                 color='black', horizontalalignment='center',
+                                   verticalalignment='center')
+            
+            
             return player_circles
     def close(self):
         pass
