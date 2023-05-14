@@ -95,7 +95,7 @@ class NBAGymEnv(gym.Env):
         self.time_increment = 0.25 #seconds per unit
         self.max_player_speed = .5
         self.ball_speed = 1
-        self.ball_state = 'DRIBBLING' # or 'PASSING' or 'SHOOTING' of 'MIDAIR'
+        self.ball_state = 'DRIBBLING' # or 'PASSING' or 'SHOOTING' or 'MIDAIR PASS' or 'MIDAIR SHOT' or 'MADE SHOT' or 'MISSED SHOT' or 'STOLEN' or 'BLOCKED'
         self.basket_location = (6, 25)
         self.court_dims = (47, 50)
         self.all_states = [deepcopy(self.state)]
@@ -138,8 +138,72 @@ class NBAGymEnv(gym.Env):
                                 *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                 0.0, 0.0, 0.0, *r_p[0], 0.0, 0.0, 24.0])
 
-    def reward(self):
-        pass
+    def reward_defense(self, player_id):
+        player_location = [self.state[4*player_id],self.state[4*player_id+1]]
+        ball_location = [self.state[-5], self.state[-4]]
+        dist_list = []
+        reward = 0
+        for i in range(5):
+            dist_list.append(self.spacing_helper(player_id,i))
+        min_dist = np.min(dist_list)
+        min_dist_inverse = 1/min_dist # The closer they area to offensive players, the higher the reward
+        reward+=min_dist_inverse*10 #placeholder
+        if math.dist(player_location, ball_location)<2 and not self.ball_state== 'MIDAIR SHOT': #roughly in position to steal
+            reward+=2 #placeholder
+            if(self.ball_state== 'MIDAIR PASS'):
+                reward+=1
+            if(self.ball_state== 'SHOOTING'): #roughly in position to block
+                reward+=1
+        return reward
+            
+
+        
+    def reward_offense_onball(self, player_id):
+        
+        if(self.ball_state == 'MIDAIR PASS' or self.ball_state == 'MIDAIR SHOT'):
+            return 0
+        reward = 0
+        if(self.ball_state =='STOLEN' or self.ball_state =='BLOCKED' or self.ball_state=='OB'):
+            reward -= 3 #turnover
+        if(self.state[-1]<3.0 and (self.ball_state!= 'MIDAIR SHOT' or self.ball_state!= 'MADE SHOT'or self.ball_state!= 'MISSED SHOT' )):
+           reward -= 1/self.state[-1]*10  #shooting with low shot clock
+        if(self.ball_state == 'MADE SHOT'):
+            reward += 5 #made shot
+        if(self.player_posession != player_id and self.player_posession<5):
+            reward+=2 # completed pass
+        dist_list = []
+        for i in range(5,10):
+            dist_list.append(self.spacing_helper(player_id,i))
+        min_dist = np.min(dist_list)
+        #min_dist_inverse = 1/min_dist # The closer they area to defensive players, the lower the reward
+        reward+=min_dist/10 #placeholder
+        return reward
+    def reward_offense_offball(self, player_id):
+        player_location = [self.state[4*player_id],self.state[4*player_id+1]]
+        ball_location = [self.state[-5], self.state[-4]]
+        dist_list = []
+        reward = 0
+        for i in range(5,10):
+            dist_list.append(self.spacing_helper(player_id,i))
+        min_dist = np.min(dist_list)
+        #min_dist_inverse = 1/min_dist # The closer they area to defensive players, the lower the reward
+        reward+=min_dist/10 #placeholder
+        if math.dist(player_location, ball_location)<2 and self.ball_state== 'MIDAIR PASS' and self.player_posession!= player_id: #roughly in position to catch ball
+            reward+=3 #placeholder
+        offensive_dist_list = []
+        for i in range(5):
+            if(i == player_id):
+                continue
+            offensive_dist_list.append(self.spacing_helper(player_id,i))
+        min_offensive_dist = np.min(offensive_dist_list)
+        reward+=min_offensive_dist/20 #the larger the space between offensive players, the larger the reward
+        return reward
+    def spacing_helper(self, player_id_1, player_id_2):
+
+        player_1_location = [self.state[4*player_id_1],self.state[4*player_id_1+1]]
+        player_2_location = [self.state[4*player_id_2],self.state[4*player_id_2+1]]
+        return math.dist(player_1_location, player_2_location)
+        
 
 
     def movement(self, actions):
@@ -228,19 +292,24 @@ class NBAGymEnv(gym.Env):
                         # if intercepted by defense then turnover
                         if self.player_posession >= 5:
                             print('possession wrong')
+                            self.ball_state = 'STOLEN'
                             return False
                         break
                 # out of bounds turnover
                 if self.state[-5] > self.court_dims[0] - self.force_field:
                     print('OB1')
+                    self.ball_state = 'OB'
                     return False
                 elif self.state[-5] < self.force_field:
+                    self.ball_state = 'OB'
                     print('OB2')
                     return False
                 if self.state[-4] > self.court_dims[1] - self.force_field:
+                    self.ball_state = 'OB'
                     print('OB3')
                     return False
                 elif self.state[-4] < self.force_field:
+                    self.ball_state = 'OB'
                     print('OB4')
                     return False
             elif (self.ball_state == 'SHOOTING' or 'MIDAIR SHOT'): # shooting
@@ -249,11 +318,11 @@ class NBAGymEnv(gym.Env):
                 if distance < self.ball_radius:
                     # 30% chance missing
                     if random.choice([1,2,3,4,5,6,7,8,9,10]) > 7:
-                        print('Missed Shot')
+                        self.ball_state = 'MISSED SHOT'
                         return False
                     # 70% chance making
                     else:
-                        print('Made shot')
+                        self.ball_state = 'MADE SHOT'
                         return False
 
     def step(self, actions):
@@ -287,6 +356,7 @@ class NBAGymEnv(gym.Env):
                         if distance < self.player_radius + 2*self.ball_radius:
                             weight = distance * (0.25/(-2*self.ball_radius)) + -(self.player_radius + 2*self.ball_radius)*(0.25/(-2*self.ball_radius))
                             if random.choices([1,2], weights=[weight, 1-weight]) == 1:
+                                self.ball_state = 'BLOCKED'
                                 done = False
                     # rim - ball position norm * ball speed gets ball vector
                     self.state[-3:-1] = (list(self.basket_location) - self.state[-5:-3])/np.linalg.norm(list(self.basket_location) - self.state[-5:-3]) * self.ball_speed
