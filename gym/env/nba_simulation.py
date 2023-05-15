@@ -21,10 +21,40 @@ class Agent():
         self.player = id
         self.movement_space = np.array([0.0, 0.0])
         self.posession = posession
-        #TODO: Dribble (pass to yourself), Pass to 4 others, Shoot (a pass to the rim)
+        #Dribble (pass to yourself), Pass to 4 others, Shoot (a pass to the rim)
         self.ball_handler_space = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         
         self.team = team
+
+class ModelAgent(Agent):
+    def __init__(self, id, posession=False, team=0):
+        super(ModelAgent, self).__init__(id, posession, team)
+        self.movement_space = np.array([0.0, 0.0])
+        self.max_player_speed = 2
+
+    def ball_action(self, state, choice):
+        # if pass to yourself then dribble
+        self.ball_handler_space = np.zeros(6)
+        self.ball_handler_space[choice] = 1.0
+        return deepcopy(self.ball_handler_space)
+        
+    def act(self, state, curr_vector=[0., 0.], prev_vector=[0., 0.], min_val=-2, max_val=2, decimal_places=1):
+        # if they have the ball perform ball action
+        if self.posession == True and type(curr_vector) == int:
+            a = self.ball_action(state, curr_vector)
+            if np.argmax(a) != self.player:
+                # no movement cause ball movement
+                return np.array([0.0, 0.0])
+        # get velocity in x and y direction
+        action = curr_vector
+        # add to previous vector
+        action += prev_vector
+        # if larger than max speed then cap it at that
+        if np.linalg.norm(action) > self.max_player_speed:
+            action /= np.linalg.norm(action)
+            action *= self.max_player_speed
+        return action
+
 
 class RandomAgent(Agent):
     def __init__(self, id, posession=False, team=0):
@@ -71,17 +101,17 @@ class RandomAgent(Agent):
         return action
 
 class NBAGymEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, random=True):
         super(NBAGymEnv, self).__init__()
         '''
-            State: dimensions 0-39 are [2D position, 2D direction] + 11D posession
-            + 2D ball position + 1D shot clock + 5D to say which player you are
+            State: dimensions 0-39 are [2D position, 2D direction] + 10D posession
+            + 2D ball position + 2D ball vector + 1D shot clock - 55 features
             Action: 2D movement for all players except ball handler
 
         '''
         # Define action and observation spaces
         r_p = self.generate_points()
-        # 10 players’ info ( 2D position vectors + 2D direction vector) + 11D who has the ball + 2D ball position + 2D ball vector + 1D shot clock
+        # 10 players’ info ( 2D position vectors + 2D direction vector) + 10D who has the ball + 2D ball position + 2D ball vector + 1D shot clock
         self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, 0.0, *r_p[2], 0.0, 0.0,
                                 *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
@@ -99,7 +129,10 @@ class NBAGymEnv(gym.Env):
         self.basket_location = (6, 25)
         self.court_dims = (47, 50)
         self.all_states = [deepcopy(self.state)]
-        self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
+        if random:
+            self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
+        else:
+            self.players = [ModelAgent(0, True), ModelAgent(1), ModelAgent(2), ModelAgent(3), ModelAgent(4), ModelAgent(5, team=1), ModelAgent(6, team=1), ModelAgent(7, team=1), ModelAgent(8, team=1), ModelAgent(9, team=1)]
         # Initialize the play
 
     def generate_points(self, min_distance=2.5, num_points=10, box_width=47, box_height=50):
@@ -155,8 +188,6 @@ class NBAGymEnv(gym.Env):
             if(self.ball_state== 'SHOOTING'): #roughly in position to block
                 reward+=1
         return reward
-            
-
         
     def reward_offense_onball(self, player_id):
         
@@ -166,7 +197,10 @@ class NBAGymEnv(gym.Env):
         if(self.ball_state =='STOLEN' or self.ball_state =='BLOCKED' or self.ball_state=='OB'):
             reward -= 3 #turnover
         if(self.state[-1]<3.0 and (self.ball_state!= 'MIDAIR SHOT' or self.ball_state!= 'MADE SHOT'or self.ball_state!= 'MISSED SHOT' )):
-           reward -= 1/self.state[-1]*10  #shooting with low shot clock
+            if self.state[-1] != 0:
+               reward -= 1/self.state[-1]*10  #shooting with low shot clock
+            else:
+                reward -= 1
         if(self.ball_state == 'MADE SHOT'):
             reward += 5 #made shot
         if(self.player_posession != player_id and self.player_posession<5):
@@ -178,6 +212,7 @@ class NBAGymEnv(gym.Env):
         #min_dist_inverse = 1/min_dist # The closer they area to defensive players, the lower the reward
         reward+=min_dist/10 #placeholder
         return reward
+    
     def reward_offense_offball(self, player_id):
         player_location = [self.state[4*player_id],self.state[4*player_id+1]]
         ball_location = [self.state[-5], self.state[-4]]
@@ -198,14 +233,13 @@ class NBAGymEnv(gym.Env):
         min_offensive_dist = np.min(offensive_dist_list)
         reward+=min_offensive_dist/20 #the larger the space between offensive players, the larger the reward
         return reward
+    
     def spacing_helper(self, player_id_1, player_id_2):
 
         player_1_location = [self.state[4*player_id_1],self.state[4*player_id_1+1]]
         player_2_location = [self.state[4*player_id_2],self.state[4*player_id_2+1]]
         return math.dist(player_1_location, player_2_location)
         
-
-
     def movement(self, actions):
         # update player positions - get proposed positions for all and do out of bounds check,
         proposed_pos = np.zeros((10, 2))
@@ -325,11 +359,22 @@ class NBAGymEnv(gym.Env):
                         self.ball_state = 'MADE SHOT'
                         return False
 
+    def shift_perspective(self, player_id):
+        player_state = deepcopy(self.state)
+        tmp = player_state[player_id*4:player_id*4+4]
+        player_state[player_id*4:player_id*4+4] = player_state[0:4]
+        player_state[0:4] = tmp
+        tmp = player_state[-15+player_id]
+        player_state[-15+player_id] = player_state[-15]
+        player_state[-15] = tmp
+        return player_state
+
     def step(self, actions):
         '''
             actions: np.array of 10 actions, one for each player
         '''
         done = False
+        prev_player_posession = self.player_posession
         # update player positions
         self.movement(actions)
         print(self.ball_state,  'in step')
@@ -383,8 +428,19 @@ class NBAGymEnv(gym.Env):
         if self.state[-1] <= 0:
             done = True
         self.all_states.append(deepcopy(self.state))
-        #print(done)
-        return done
+
+        onball_rewards = 0
+        offball_rewards = []
+        defense_rewards = []
+        for p in self.players:
+            if p.player == prev_player_posession:
+                onball_rewards = self.reward_offense_onball(p.player)
+            elif p.team == 0:
+                offball_rewards.append(self.reward_offense_offball(p.player))
+            else:
+                defense_rewards.append(self.reward_defense(p.player))
+
+        return onball_rewards, offball_rewards, defense_rewards, done
        
     def render(self):
         # Leave some space for inbound passes
