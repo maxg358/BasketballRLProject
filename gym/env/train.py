@@ -216,9 +216,10 @@ def training_loop(episodes):
             ball_optimizer.step()
 
         game.reset()
+    game.render()
     return all_rewards
 
-all_rewards = training_loop(10)
+all_rewards = training_loop(2)
 smoothed_rewards = pd.Series.rolling(pd.Series(all_rewards), 10).mean()
 smoothed_rewards = [elem for elem in smoothed_rewards]
 plt.plot(all_rewards)

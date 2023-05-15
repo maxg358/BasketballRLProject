@@ -129,7 +129,8 @@ class NBAGymEnv(gym.Env):
         self.basket_location = (6, 25)
         self.court_dims = (47, 50)
         self.all_states = [deepcopy(self.state)]
-        if random:
+        self.random = random
+        if self.random:
             self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
         else:
             self.players = [ModelAgent(0, True), ModelAgent(1), ModelAgent(2), ModelAgent(3), ModelAgent(4), ModelAgent(5, team=1), ModelAgent(6, team=1), ModelAgent(7, team=1), ModelAgent(8, team=1), ModelAgent(9, team=1)]
@@ -170,6 +171,14 @@ class NBAGymEnv(gym.Env):
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
                                 *r_p[9], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                 0.0, 0.0, 0.0, *r_p[0], 0.0, 0.0, 24.0])
+        self.all_states.append(self.state)
+        self.ball_state = 'DRIBBLING'
+        self.player_posession = 0
+        if self.random:
+            self.players = [RandomAgent(0, True), RandomAgent(1), RandomAgent(2), RandomAgent(3), RandomAgent(4), RandomAgent(5, team=1), RandomAgent(6, team=1), RandomAgent(7, team=1), RandomAgent(8, team=1), RandomAgent(9, team=1)]
+        else:
+            self.players = [ModelAgent(0, True), ModelAgent(1), ModelAgent(2), ModelAgent(3), ModelAgent(4), ModelAgent(5, team=1), ModelAgent(6, team=1), ModelAgent(7, team=1), ModelAgent(8, team=1), ModelAgent(9, team=1)]
+        
 
     def reward_defense(self, player_id):
         player_location = [self.state[4*player_id],self.state[4*player_id+1]]
@@ -411,7 +420,10 @@ class NBAGymEnv(gym.Env):
                     #print('PASSING IN STEP')
                     # curr target player pos - ball position norm * ball speed gets ball vector
                     target_pos = self.state[np.argmax(b_space)*4:np.argmax(b_space)*4+2]
-                    self.state[-3:-1] = (target_pos - self.state[-5:-3])/np.linalg.norm(target_pos - self.state[-5:-3]) * self.ball_speed
+                    try:
+                        self.state[-3:-1] = (target_pos - self.state[-5:-3])/np.linalg.norm(target_pos - self.state[-5:-3]) * self.ball_speed
+                    except:
+                        pass
                 # Remove posession from player
                 self.players[self.player_posession].ball_handler_space = np.zeros(6)
                 self.players[self.player_posession].posession = False
@@ -441,7 +453,12 @@ class NBAGymEnv(gym.Env):
                 defense_rewards.append(self.reward_defense(p.player))
 
         return onball_rewards, offball_rewards, defense_rewards, done
-       
+
+    def init(self):
+        for patch in self.player_circles:
+            patch.set_visible(False)
+        return tuple()
+
     def render(self):
         # Leave some space for inbound passes
         ax = plt.axes(xlim=(0,
@@ -461,52 +478,51 @@ class NBAGymEnv(gym.Env):
         offense_player_coords = self.all_states[0][:20]
         defense_player_coords = self.all_states[0][20:40]
         ball_coords = self.all_states[0][-5:-3]
-        player_circles = []
+        self.player_circles = []
         for i in range(5):
-            player_circles.append(plt.Circle((offense_player_coords[4*i], offense_player_coords[4*i+1]), radius = self.player_radius, color = 'g' ))
+            self.player_circles.append(plt.Circle((offense_player_coords[4*i], offense_player_coords[4*i+1]), radius = self.player_radius/3, color = 'g' ))
             #ax.annotate(i, xy=[offense_player_coords[4*i], offense_player_coords[4*i+1]], color = 'k')
         for i in range(5):
-            player_circles.append(plt.Circle((defense_player_coords[4*i], defense_player_coords[4*i+1]), radius = self.player_radius, color = 'b' ))
+            self.player_circles.append(plt.Circle((defense_player_coords[4*i], defense_player_coords[4*i+1]), radius = self.player_radius/3, color = 'b' ))
             #ax.annotate(i+5, xy=[defense_player_coords[4*i], defense_player_coords[4*i+1]], color = 'k')
-        
-        player_circles.append(plt.Circle((ball_coords[0], ball_coords[1]), radius = self.ball_radius/3, color = 'orange' ))
-        # for circle in player_circles:
-        #     ax.add_patch(circle)
-        # ball_circle = plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
-        #                          color=start_moment.ball.color)
-        # ax.add_patch(ball_circle)
-        
+        # ball patch        
+        self.player_circles.append(plt.Circle((ball_coords[0], ball_coords[1]), radius = self.ball_radius/3, color = 'orange' ))
+
+        for circle in self.player_circles:
+                ax.add_patch(circle)
         anim = animation.FuncAnimation(
-                         fig, self.animate, frames = len(self.all_states),fargs = (ax,), 
-                         blit = True, interval=10,repeat = True)
+                         fig, self.animate, init_func=self.init, frames = len(self.all_states),fargs = (ax,), 
+                         blit = True, interval=10, repeat = True)
         court = plt.imread("halfcourt.png")
         plt.imshow(court, zorder=0, extent=[0, 47,
                                             50, 0])
-        plt.show()
+        # plt.show()
+        f = "animation.gif"
+        writergif = animation.PillowWriter(fps=30) 
+        anim.save(f, writer=writergif)
     
         
     def animate(self, frame, ax):
             offense_player_coords = self.all_states[frame][:20]
             defense_player_coords = self.all_states[frame][20:40]
             ball_coords = self.all_states[frame][-5:-3]
-            player_circles = []
             for i in range(5):
-                player_circles.append(plt.Circle((offense_player_coords[i*4], offense_player_coords[i*4+1]), radius = self.player_radius/3, color = 'g' ))
+                self.player_circles[i].set_visible(True)
+                self.player_circles[i].center = offense_player_coords[i*4], offense_player_coords[i*4+1]
                 #ax.annotate(i, xy=[offense_player_coords[4*i], offense_player_coords[4*i+1]], color = 'k')
             for i in range(5):
-                player_circles.append(plt.Circle((defense_player_coords[4*i], defense_player_coords[4*i+1]), radius = self.player_radius/3, color = 'b' ))
+                self.player_circles[i+5].set_visible(True)
+                self.player_circles[i+5].center = defense_player_coords[4*i], defense_player_coords[4*i+1]
                 #ax.annotate(i+5, xy=[defense_player_coords[4*i], defense_player_coords[4*i+1]], color = 'k')
             # ball circle
-            player_circles.append(plt.Circle((ball_coords[0], ball_coords[1]), radius = self.ball_radius/3, color = 'orange' ))
-            for circle in player_circles:
-                
-                ax.add_patch(circle)
+            self.player_circles[-1].set_visible(True)
+            self.player_circles[-1].center = ball_coords[0], ball_coords[1]
             ax.text(23.5,48,str(self.all_states[frame][-1]),
                                  color='black', horizontalalignment='center',
                                    verticalalignment='center')
             
             
-            return player_circles
+            return self.player_circles
     def close(self):
         pass
     
