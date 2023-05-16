@@ -51,7 +51,7 @@ class AdvantageActorCritic(nn.Module):
 
         return value, policy_dist
 
-def training_loop(episodes):
+def training_loop(episodes, save_path=''):
     
     # Constants
     GAMMA = 0.99
@@ -76,11 +76,20 @@ def training_loop(episodes):
     offense_optimizer = optim.Adam(offense_model.parameters(), lr=non_ball_lr)
     defense_optimizer = optim.Adam(defense_model.parameters(), lr=non_ball_lr)
     ball_optimizer = optim.Adam(ball_model.parameters(), lr=ball_lr)
-    
+    actions_tracked = {'stolen': [], 'blocked': [], 'outofbounds': [], 'no_shot': [], 'made_shot': [], 'missed_shot': []}
     # number of games loop
     all_rewards = []
-    
+    all_steps = []
+    shot_distances = []
     for episode in tqdm(range(episodes)):
+        save_state = False
+        if episode % 50 == 0:
+            torch.save(offense_model.state_dict(), os.path.join(save_path, 'offense_model.pt'))
+            torch.save(defense_model.state_dict(), os.path.join(save_path, 'defense_model.pt'))
+            torch.save(ball_model.state_dict(), os.path.join(save_path, 'ball_model.pt'))
+            save_state = True
+            for key in actions_tracked.keys():
+                actions_tracked[key].append(game.all_actions[key])
         actions = [[0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0]]
         Dlog_probs = []
         Dvalues = []
@@ -93,7 +102,9 @@ def training_loop(episodes):
         Drewards = []
         done = False
         # within game loop
+        steps = 0
         while not done:
+            steps += 1
             collect_breward = False
             for i, agent in enumerate(game.players):
                 player_state = game.shift_perspective(agent.player) # shift perspective of player
@@ -151,14 +162,18 @@ def training_loop(episodes):
                     Dlog_probs.append(torch.squeeze(log_prob))
                     Dentropy_term += entropy
 
-            Breward, Oreward, Dreward, done = game.step(actions)
+            Breward, Oreward, Dreward, done = game.step(actions, save_state)
             Orewards += Oreward
             if collect_breward:
                 Brewards.append(Breward)
             Drewards += Dreward
 
-        all_rewards.append(np.sum(Orewards) + np.sum(Brewards) + np.sum(Drewards))
+        all_rewards.append([np.sum(Orewards)/len(Orewards), np.sum(Brewards)/len(Brewards), np.sum(Drewards)/len(Drewards)])
+        all_steps.append(steps)
+        if game.shot_dist > 0:
+            shot_distances.append(game.shot_dist)
 
+        # compute loss and update parameters
         state = torch.from_numpy(game.state).float().to(device)
         DQval, _ = defense_model.forward(state)
         DQval = DQval.detach().cpu().numpy()[0,0]
@@ -216,16 +231,64 @@ def training_loop(episodes):
             ball_optimizer.step()
 
         game.reset()
-    game.render()
-    return all_rewards
+        if episode % 10 == 0:
+            print("Episode: {}, Oreward: {}, Breward: {}, Dreward: {}".format(episode, np.sum(Orewards)/len(Orewards), np.sum(Brewards)/len(Brewards), np.sum(Drewards)/len(Drewards)))
 
-all_rewards = training_loop(2)
-smoothed_rewards = pd.Series.rolling(pd.Series(all_rewards), 10).mean()
-smoothed_rewards = [elem for elem in smoothed_rewards]
-plt.plot(all_rewards)
-plt.plot(smoothed_rewards)
+    game.render(save_path)
+    return all_rewards, all_steps, actions_tracked, shot_distances
+
+save_path = 'run4'
+os.mkdir(save_path)
+all_rewards, all_steps, actions_tracked, shot_distances = training_loop(750, save_path)
+all_rewards = np.array(all_rewards)
+smoothed_Orewards = pd.Series.rolling(pd.Series(all_rewards[:, 0]), 10).mean()
+smoothed_Orewards = [elem for elem in smoothed_Orewards]
+smoothed_Brewards = pd.Series.rolling(pd.Series(all_rewards[:, 1]), 10).mean()
+smoothed_Brewards = [elem for elem in smoothed_Brewards]
+smoothed_Drewards = pd.Series.rolling(pd.Series(all_rewards[:, 2]), 10).mean()
+smoothed_Drewards = [elem for elem in smoothed_Drewards]
+plt.clf()
+plt.cla()
+plt.plot(all_rewards[:, 0])
+plt.plot(all_rewards[:, 1])
+plt.plot(all_rewards[:, 2])
+plt.legend(["Offense", "Ball", "Defense"], loc ="lower right")
 plt.xlabel('Episode')
-plt.ylabel('Reward')
-plt.title('Reward vs Episode')
-plt.savefig('reward.png')
+plt.ylabel('Rewards')
+plt.title('Rewards vs Episode')
+plt.savefig(os.path.join(save_path, 'reward.png'))
+plt.clf()
+plt.cla()
+plt.plot(smoothed_Orewards)
+plt.plot(smoothed_Brewards)
+plt.plot(smoothed_Drewards)
+plt.legend(["Offense", "Ball", "Defense"], loc ="lower right")
+plt.xlabel('Episode')
+plt.ylabel('Rewards')
+plt.title('Rewards vs Episode')
+plt.savefig(os.path.join(save_path, 'smooth_reward.png'))
+plt.clf()
+plt.cla()
+plt.plot(all_steps)
+plt.xlabel('Episode')
+plt.ylabel('Number of Steps')
+plt.title('Number of Steps vs Episode')
+plt.savefig(os.path.join(save_path, 'steps.png'))
+plt.clf()
+plt.cla()
+for act in actions_tracked.keys():
+    plt.plot(actions_tracked[act])
+plt.legend(["stolen", "blocked", "outofbounds", "no_shot", "made_shot", "missed_shot"], loc ="lower right")
+plt.xlabel('Episode')
+plt.ylabel('Occurrences')
+plt.title('Actions Occurred vs Episode')
+plt.savefig(os.path.join(save_path, 'actions.png'))
+plt.clf()
+plt.cla()
+plt.plot(shot_distances)
+plt.xlabel('Episode')
+plt.ylabel('Shot Distance')
+plt.title('Shot Distance vs Episode')
+plt.savefig(os.path.join(save_path, 'shot.png'))
 
+# TODO: infra to load model and run games
