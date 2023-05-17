@@ -83,13 +83,13 @@ def training_loop(episodes, save_path=''):
     shot_distances = []
     for episode in tqdm(range(episodes)):
         save_state = False
-        if episode % 50 == 0:
+        if episode % 50 == 0 and episode != 0:
             torch.save(offense_model.state_dict(), os.path.join(save_path, 'offense_model.pt'))
             torch.save(defense_model.state_dict(), os.path.join(save_path, 'defense_model.pt'))
             torch.save(ball_model.state_dict(), os.path.join(save_path, 'ball_model.pt'))
             save_state = True
             for key in actions_tracked.keys():
-                actions_tracked[key].append(game.all_actions[key])
+                actions_tracked[key].append(game.all_actions[key]/episode)
         actions = [[0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0]]
         Dlog_probs = []
         Dvalues = []
@@ -237,9 +237,9 @@ def training_loop(episodes, save_path=''):
     game.render(save_path)
     return all_rewards, all_steps, actions_tracked, shot_distances
 
-save_path = 'run4'
+save_path = 'run6'
 os.mkdir(save_path)
-all_rewards, all_steps, actions_tracked, shot_distances = training_loop(750, save_path)
+all_rewards, all_steps, actions_tracked, shot_distances = training_loop(500, save_path)
 all_rewards = np.array(all_rewards)
 smoothed_Orewards = pd.Series.rolling(pd.Series(all_rewards[:, 0]), 10).mean()
 smoothed_Orewards = [elem for elem in smoothed_Orewards]
@@ -269,7 +269,8 @@ plt.title('Rewards vs Episode')
 plt.savefig(os.path.join(save_path, 'smooth_reward.png'))
 plt.clf()
 plt.cla()
-plt.plot(all_steps)
+smoothed_steps = pd.Series.rolling(pd.Series(all_steps), 10).mean()
+plt.plot(smoothed_steps)
 plt.xlabel('Episode')
 plt.ylabel('Number of Steps')
 plt.title('Number of Steps vs Episode')

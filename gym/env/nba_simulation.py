@@ -117,13 +117,13 @@ class NBAGymEnv(gym.Env):
                 OnBall:
                     - -10 for turnover (stolen, blocked, or out of bounds)
                     - -2 to -40 for not taking a shot within 24 seconds
-                    - +2 for every second the ball is in the air during shot
+                    - +0 for every second the ball is in the air during shot
                     - +20 for made shot
-                    - +2 for every completed pass
+                    - +0.5 for every completed pass
                     - +dist/3 to nearest defender
                 Offense:
                     - +dist/3 to nearest defender
-                    - +3 for being in position to catch pass
+                    - +1 for being in position to catch pass
                     - +distance to nearest offensive player/10 for offensive spacing
                     - +distance to nearest defensive player/10 for being open
 
@@ -131,7 +131,7 @@ class NBAGymEnv(gym.Env):
         '''
         # reset fields
         # Define action and observation spaces
-        r_p = self.generate_points()
+        r_p = self.generate_points(hard_coded=not random)
         # 10 players’ info ( 2D position vectors + 2D direction vector) + 10D who has the ball + 2D ball position + 2D ball vector + 1D shot clock
         self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, 0.0, *r_p[2], 0.0, 0.0,
                                 *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
@@ -159,7 +159,8 @@ class NBAGymEnv(gym.Env):
         self.random = random
         # Initialize the play
 
-    def generate_points(self, min_distance=2.5, num_points=10, box_width=47, box_height=50):
+    def generate_points(self, min_distance=2.5, num_points=10, box_width=47, box_height=50, hard_coded=False):
+        
         def distance(p1, p2):
             return sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
@@ -170,6 +171,21 @@ class NBAGymEnv(gym.Env):
             return True
 
         points = []
+        if hard_coded:
+            # offense
+            points.append((6, 44))
+            points.append((18, 40))
+            points.append((30, 25))
+            points.append((18, 10))
+            points.append((6, 6))
+            # defense
+            points.append((6, 42))
+            points.append((16, 38))
+            points.append((28, 25))
+            points.append((16, 12))
+            points.append((6, 8))
+            return points
+
         attempts = 0
 
         while len(points) < num_points and attempts < 1000:
@@ -188,7 +204,7 @@ class NBAGymEnv(gym.Env):
         return points
 
     def reset(self):
-        r_p = self.generate_points()
+        r_p = self.generate_points(hard_coded=not self.random)
         self.state = np.array([*r_p[0], 0.0, 0.0, *r_p[1], 0.0, 0.0, *r_p[2], 0.0, 0.0,
                                 *r_p[3], 0.0, 0.0, *r_p[4], 0.0, 0.0, *r_p[5], 0.0, 0.0,
                                 *r_p[6], 0.0, 0.0, *r_p[7], 0.0, 0.0, *r_p[8], 0.0, 0.0,
@@ -211,14 +227,14 @@ class NBAGymEnv(gym.Env):
         for i in range(5):
             dist_list.append(self.spacing_helper(player_id,i))
         min_dist = np.min(dist_list)
-        min_dist_inverse = 1/min_dist # The closer they area to offensive players, the higher the reward
-        reward+=min_dist_inverse*15 #placeholder
-        if math.dist(player_location, ball_location)<2 and not self.ball_state== 'MIDAIR SHOT': #roughly in position to steal
+        min_dist_inverse = min_dist # The closer they area to offensive players, the higher the reward
+        reward-=min_dist_inverse/3 #placeholder
+        if math.dist(player_location, ball_location) < 5 and self.ball_state != 'MIDAIR SHOT': #roughly in position to steal
             reward+=2 #placeholder
-            if(self.ball_state== 'MIDAIR PASS'):
+            if(self.ball_state == 'MIDAIR PASS' or self.ball_state == 'SHOOTING' or self.ball_state == 'PASSING'):
                 reward+=5
-            if(self.ball_state== 'SHOOTING'): #roughly in position to block
-                reward+=5
+        if self.ball_state == 'MADE SHOT':
+            reward -= 5
         return reward
         
     def reward_offense_onball(self, player_id):
@@ -227,27 +243,32 @@ class NBAGymEnv(gym.Env):
             currently has posession
         '''
         if self.ball_state == 'MIDAIR SHOT':
-            return 2
+            return 0
         if self.ball_state == 'MIDAIR PASS':
             return 0
         if(self.ball_state == 'MADE SHOT'):
-            return 20 #made shot
+            return 15 #made shot
         reward = 0
         if(self.ball_state =='STOLEN' or self.ball_state =='BLOCKED' or self.ball_state=='OB'):
-            reward -= 10 #turnover
+            reward -= 20 #turnover
         if(self.state[-1]<5.0 and self.ball_state != 'MIDAIR SHOT' and self.ball_state != 'MADE SHOT' and self.ball_state != 'MISSED SHOT'):
             if self.state[-1] != 0:
                reward -= 1/self.state[-1]*10  #shooting with low shot clock
             else:
                 reward -= 40
         if(self.player_posession != player_id and self.player_posession<5):
-            reward+=2 # completed pass
+            reward+=3 # completed pass
         dist_list = []
         for i in range(5,10):
             dist_list.append(self.spacing_helper(player_id,i))
         min_dist = np.min(dist_list)
         #min_dist_inverse = 1/min_dist # The closer they area to defensive players, the lower the reward
-        reward+=min_dist/3 #placeholder
+        reward-=10/min_dist #placeholder
+        basket_dist = math.dist(self.state[player_id*4: player_id*4+2], self.basket_location)
+        # if near basket and your action isn't shooting get penalized
+        if basket_dist < 6.5 and self.ball_state != 'MIDAIR SHOT' and self.ball_state != 'SHOOTING':
+            reward -= 10
+        reward += 1/self.state[-1] if self.state[-1] > 10  else 0
         return reward
     
     def reward_offense_offball(self, player_id):
@@ -259,7 +280,7 @@ class NBAGymEnv(gym.Env):
             dist_list.append(self.spacing_helper(player_id,i))
         min_dist = np.min(dist_list)
         #min_dist_inverse = 1/min_dist # The closer they area to defensive players, the lower the reward
-        reward+=min_dist/3 #placeholder
+        reward-=10/min_dist #placeholder
         if math.dist(player_location, ball_location)<2 and self.ball_state == 'MIDAIR PASS' and self.player_posession != player_id: #roughly in position to catch ball
             reward+=3 #placeholder
         offensive_dist_list = []
@@ -270,11 +291,6 @@ class NBAGymEnv(gym.Env):
             offensive_dist_list.append(self.spacing_helper(player_id,i))
         min_offensive_dist = np.min(offensive_dist_list)
         reward+=min_offensive_dist/10 #the larger the space between offensive players, the larger the reward
-        for i in range(5, 10):
-            defensive_dist_list.append(self.spacing_helper(player_id,i))
-        min_defensive_dist = np.min(defensive_dist_list)
-        reward+=min_defensive_dist/10 #the larger the space away from defensive players, the larger the reward
-
         return reward
     
     def spacing_helper(self, player_id_1, player_id_2):
@@ -355,8 +371,8 @@ class NBAGymEnv(gym.Env):
                     
                     distance = np.linalg.norm(self.state[i*4:i*4+2] - self.state[-5:-3])
                     if distance < self.player_radius + self.ball_radius and i!= self.player_posession:
-                        # if near defense, give 10% chance of stealing, otherwise let it go through
-                        if i >= 5 and random.choice([1,2,3,4,5,6,7,8,9,10]) != 10 :
+                        # if near defense, give 15% chance of stealing, otherwise let it go through
+                        if i >= 5 and random.choices([0, 1], weights=(0.15, 0.85))[0] == 1:
                             print('not stolen')
                             continue
                         print('caught by', i, prev_player)
@@ -400,7 +416,7 @@ class NBAGymEnv(gym.Env):
                 if distance < self.ball_radius:
                     # % chance making shot based on distance, capped at 30% and 70%
                     shot_chance = 0.3 if self.shot_dist >= 24 else (0.7 if self.shot_dist <= 5 else 0.3 + 0.021*(self.shot_dist-5))
-                    if random.choices([0, 1], weights=(1-shot_chance, shot_chance)) == 0:
+                    if random.choices([0, 1], weights=(1-shot_chance, shot_chance))[0] == 0:
                         self.ball_state = 'MISSED SHOT'
                         self.all_actions['missed_shot'] += 1
                         return False
@@ -444,14 +460,15 @@ class NBAGymEnv(gym.Env):
                     self.ball_state = 'SHOOTING'
                     print('Shooting')
                     self.shot_dist = math.dist(self.state[-5:-3], self.basket_location)
+                    self.state[self.player_posession - 15] = 0
                     # check if any defense is blocking
-                    for i in range(5):
-                        distance = np.linalg.norm(self.state[(i+5)*4:(i+5)*4+2] - self.state[-5:-3])
+                    for i in range(5, 10):
+                        distance = np.linalg.norm(self.state[i*4:i*4+2] - self.state[-5:-3])
                         # probability of blocking based on distance away with max distance for chance to block is 2*ball radius + player radius
                         # highest probability capped at 0.25 if you're within force field
-                        if distance < self.player_radius + 2*self.ball_radius:
+                        if distance < self.player_radius + self.ball_radius:
                             weight = distance * (0.25/(-2*self.ball_radius)) + -(self.player_radius + 2*self.ball_radius)*(0.25/(-2*self.ball_radius))
-                            if random.choices([1,2], weights=[weight, 1-weight]) == 1:
+                            if random.choices([1,2], weights=[weight, 1-weight])[0] == 1:
                                 self.ball_state = 'BLOCKED'
                                 self.all_actions['blocked'] += 1
                                 done = True
