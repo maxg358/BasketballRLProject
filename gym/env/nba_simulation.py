@@ -228,7 +228,7 @@ class NBAGymEnv(gym.Env):
             dist_list.append(self.spacing_helper(player_id,i))
         min_dist = np.min(dist_list)
         min_dist_inverse = min_dist # The closer they area to offensive players, the higher the reward
-        reward-=min_dist_inverse/3 #placeholder
+        reward+=10/min_dist_inverse #placeholder
         if math.dist(player_location, ball_location) < 5 and self.ball_state != 'MIDAIR SHOT': #roughly in position to steal
             reward+=2 #placeholder
             if(self.ball_state == 'MIDAIR PASS' or self.ball_state == 'SHOOTING' or self.ball_state == 'PASSING'):
@@ -247,15 +247,17 @@ class NBAGymEnv(gym.Env):
         if self.ball_state == 'MIDAIR PASS':
             return 0
         if(self.ball_state == 'MADE SHOT'):
-            return 15 #made shot
+            return 10 #made shot
         reward = 0
         if(self.ball_state =='STOLEN' or self.ball_state =='BLOCKED' or self.ball_state=='OB'):
-            reward -= 20 #turnover
+            reward -= 5 #turnover
         if(self.state[-1]<5.0 and self.ball_state != 'MIDAIR SHOT' and self.ball_state != 'MADE SHOT' and self.ball_state != 'MISSED SHOT'):
             if self.state[-1] != 0:
                reward -= 1/self.state[-1]*10  #shooting with low shot clock
             else:
                 reward -= 40
+        if self.ball_state == 'PASSING':
+            reward += 2
         if(self.player_posession != player_id and self.player_posession<5):
             reward+=3 # completed pass
         dist_list = []
@@ -268,7 +270,7 @@ class NBAGymEnv(gym.Env):
         # if near basket and your action isn't shooting get penalized
         if basket_dist < 6.5 and self.ball_state != 'MIDAIR SHOT' and self.ball_state != 'SHOOTING':
             reward -= 10
-        reward += 1/self.state[-1] if self.state[-1] > 10  else 0
+        reward += 15/self.state[-1] if self.state[-1] > 10  else 0
         return reward
     
     def reward_offense_offball(self, player_id):
@@ -356,7 +358,6 @@ class NBAGymEnv(gym.Env):
     def ball_movement(self):
         # if someone is dribbling, set ball pos to that of player with posession, ball direction to player direction
         if self.ball_state == 'DRIBBLING':
-            print('dribbling')
             self.state[-5:-3] = self.state[self.player_posession*4:self.player_posession*4+2]
             self.state[-3:-1] = self.state[self.player_posession*4+2:self.player_posession*4+4]
         else:
@@ -427,12 +428,23 @@ class NBAGymEnv(gym.Env):
 
     def shift_perspective(self, player_id):
         player_state = deepcopy(self.state)
-        tmp = player_state[player_id*4:player_id*4+4]
-        player_state[player_id*4:player_id*4+4] = player_state[0:4]
-        player_state[0:4] = tmp
-        tmp = player_state[-15+player_id]
-        player_state[-15+player_id] = player_state[-15]
-        player_state[-15] = tmp
+        if player_id >= 5:
+            tmp = player_state[0:20]
+            player_state[0:20] = player_state[20:40]
+            player_state[20:40] = tmp
+            tmp = player_state[-15:-10]
+            player_state[-15:-10] = player_state[-10:-5]
+            player_state[-10:-5] = tmp
+            tmp = player_state[(player_id-5)*4: (player_id-5)*4+4]
+            player_state[(player_id-5)*4: (player_id-5)*4+4] = player_state[0:4]
+            player_state[0:4] = tmp
+        else:
+            tmp = player_state[player_id*4:player_id*4+4]
+            player_state[player_id*4:player_id*4+4] = player_state[0:4]
+            player_state[0:4] = tmp
+            tmp = player_state[-15+player_id]
+            player_state[-15+player_id] = player_state[-15]
+            player_state[-15] = tmp
         return player_state
 
     def step(self, actions, save_state=False):
